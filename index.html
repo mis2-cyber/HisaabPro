@@ -692,43 +692,81 @@ const fmtMoney = n => {
 const getToday = () => new Date().toISOString().slice(0, 10);
 const getCurrentTime = () => new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-function normalizeTimeForUI(timeStr) {
-  let s = String(timeStr || '').trim();
-  if (!s) return '';
+function normalizeTimeForUI(value) {
+  if (value === null || value === undefined || value === '') return '';
 
-  // Remove Google Sheets/JavaScript's 30-Dec-1899 base date.
-  const m1899 = s.match(
-    /(?:Sat|Sun|Mon|Tue|Wed|Thu|Fri)?\s*Dec\s*30\s*1899\s+(.+?)(?:\s+GMT[+-]\d+.*)?$/i
-  );
-  if (m1899) s = m1899[1].trim();
+  const s = String(value).trim();
 
-  // Handle ISO/JS Date strings containing the 1899 base date.
-  if (/1899[-/]12[-/]30/i.test(s)) {
-    const tm = s.match(/(?:T|\s)(\d{1,2}:\d{2}(?::\d{2})?)/);
-    s = tm ? tm[1] : '';
+  // Already a normal UI time such as 17:12 or 5:12 PM.
+  const ampm = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]M)$/i);
+  if (ampm) {
+    let h = Number(ampm[1]);
+    const m = Number(ampm[2]);
+    const ap = ampm[3].toUpperCase();
+    if (h >= 1 && h <= 12 && m >= 0 && m <= 59) {
+      if (ap === 'PM' && h < 12) h += 12;
+      if (ap === 'AM' && h === 12) h = 0;
+      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+    }
   }
 
-  // Convert HH:mm[:ss] to hh:mm AM/PM.
-  const hm = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
-  if (hm) {
-    let h = Number(hm[1]);
-    const min = hm[2];
-    const ap = h >= 12 ? 'PM' : 'AM';
-    h = h % 12 || 12;
-    return `${String(h).padStart(2, '0')}:${min} ${ap}`;
+  // Google Sheets / Apps Script Date string:
+  // "Sat Dec 30 1899 17:12:00 GMT+0521 ..."
+  const jsDate = new Date(s);
+  if (!Number.isNaN(jsDate.getTime()) && /GMT|UTC|T\d{2}:\d{2}/i.test(s)) {
+    // For time-only values, use the displayed clock portion from the source
+    // instead of allowing the browser to shift it through another timezone.
+    const tm = s.match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b/);
+    if (tm) {
+      return `${String(Number(tm[1])).padStart(2,'0')}:${tm[2]}`;
+    }
   }
+
+  // ISO datetime/time.
+  const iso = s.match(/T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?/);
+  if (iso) return `${iso[1]}:${iso[2]}`;
+
+  // Plain HH:mm / HH:mm:ss.
+  const plain = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
+  if (plain) return `${String(Number(plain[1])).padStart(2,'0')}:${plain[2]}`;
 
   return s;
 }
 
-function formatDisplayDateTime(dateStr, timeStr) {
-  if (!dateStr) return 'N/A';
-  const parts = String(dateStr).split('-');
-  const formattedDate = parts.length === 3
-    ? `${parts[2]}/${parts[1]}/${parts[0]}`
-    : String(dateStr);
-  const cleanTime = normalizeTimeForUI(timeStr);
-  return cleanTime ? `${formattedDate}, ${cleanTime}` : formattedDate;
+function formatDisplayDateTime(dateValue, timeValue) {
+  let dateText = '';
+  let timeText = '';
+
+  if (dateValue !== null && dateValue !== undefined && dateValue !== '') {
+    const s = String(dateValue).trim();
+
+    // ISO date from Apps Script: 2026-09-14T18:30:00.000Z
+    const isoDate = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoDate) {
+      dateText = `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}`;
+    } else {
+      const d = new Date(s);
+      if (!Number.isNaN(d.getTime())) {
+        dateText = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+      } else {
+        dateText = s;
+      }
+    }
+  }
+
+  const normalizedTime = normalizeTimeForUI(timeValue);
+  if (normalizedTime) {
+    const m = normalizedTime.match(/^(\d{1,2}):(\d{2})$/);
+    if (m) {
+      let h = Number(m[1]);
+      const min = m[2];
+      const ap = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      timeText = `${h}:${min} ${ap}`;
+    }
+  }
+
+  return [dateText, timeText].filter(Boolean).join(' • ');
 }
 
 function numberToWordsINR(amount) {
